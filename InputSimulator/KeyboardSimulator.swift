@@ -138,16 +138,65 @@ enum KeyboardSimulator {
         flog("Typing complete: \(typed) typed, \(skipped) skipped")
     }
 
-    private static func postKey(_ stroke: KeyStroke) {
-        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: stroke.keyCode, keyDown: true),
-              let up   = CGEvent(keyboardEventSource: nil, virtualKey: stroke.keyCode, keyDown: false)
-        else {
-            flog("Failed to create CGEvent for keyCode \(stroke.keyCode)")
+    // Types a single character via the charMap — works in macOS apps.
+    static func typeViaCharMap(_ char: Character) {
+        if let keyCode = specialKeys[char] {
+            postKey(KeyStroke(keyCode: keyCode, flags: []))
+        } else if let stroke = charMap[char] {
+            postKey(stroke)
+        } else {
+            flog("typeViaCharMap: no mapping for '\(char)'")
+        }
+    }
+
+    // Types a single symbol via Windows Alt+numpad — works in Windows RDP.
+    static func typeSymbol(_ char: Character) {
+        guard let scalar = char.unicodeScalars.first, scalar.value <= 127 else {
+            flog("typeSymbol: unsupported character '\(char)'")
             return
         }
-        down.flags = stroke.flags
-        up.flags   = stroke.flags
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
+        flog("typeSymbol: '\(char)' (ASCII \(scalar.value)) via Alt+numpad")
+        postAltNumpad(ascii: scalar.value)
+    }
+
+    // Sends Alt+0XXX on the numpad — Windows interprets this as the ASCII character.
+    private static func postAltNumpad(ascii: UInt32) {
+        let numpadCodes: [UInt32: CGKeyCode] = [
+            0: 0x52, 1: 0x53, 2: 0x54, 3: 0x55,
+            4: 0x56, 5: 0x57, 6: 0x58, 7: 0x59,
+            8: 0x5B, 9: 0x5C,
+        ]
+        let digits: [UInt32] = [0, ascii / 100, (ascii % 100) / 10, ascii % 10]
+
+        postRaw(0x3A, down: true,  flags: .maskAlternate) // Left Alt down
+        for d in digits {
+            if let kc = numpadCodes[d] {
+                postRaw(kc, down: true,  flags: .maskAlternate)
+                postRaw(kc, down: false, flags: .maskAlternate)
+            }
+        }
+        postRaw(0x3A, down: false, flags: []) // Left Alt up
+    }
+
+    private static func postRaw(_ keyCode: CGKeyCode, down: Bool, flags: CGEventFlags) {
+        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: down) else { return }
+        event.flags = flags
+        event.post(tap: .cghidEventTap)
+    }
+
+    private static func postKey(_ stroke: KeyStroke) {
+        let needsShift  = stroke.flags.contains(.maskShift)
+        let needsOption = stroke.flags.contains(.maskAlternate)
+
+        // Send explicit modifier key events so RDP/browser sees a real Shift/Option
+        // press rather than just a flag on the character event.
+        if needsShift  { postRaw(0x38, down: true,  flags: .maskShift) }
+        if needsOption { postRaw(0x3A, down: true,  flags: stroke.flags) }
+
+        postRaw(stroke.keyCode, down: true,  flags: stroke.flags)
+        postRaw(stroke.keyCode, down: false, flags: stroke.flags)
+
+        if needsOption { postRaw(0x3A, down: false, flags: needsShift ? .maskShift : []) }
+        if needsShift  { postRaw(0x38, down: false, flags: []) }
     }
 }

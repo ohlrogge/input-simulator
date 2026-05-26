@@ -5,8 +5,9 @@ import os
 
 private let log = Logger(subsystem: "com.niklas.inputsimulator", category: "menubar")
 
-private let kDelayKey     = "typingDelayMs"
+private let kDelayKey      = "typingDelayMs"
 private let kStartDelayKey = "startDelayMs"
+private let kRdpModeKey    = "windowsRdpMode"
 
 private struct Speed {
     let label: String
@@ -14,9 +15,9 @@ private struct Speed {
 }
 
 private let speeds: [Speed] = [
-    Speed(label: "Slow (100 ms)",   ms: 100),
-    Speed(label: "Normal (40 ms)",  ms: 40),
-    Speed(label: "Fast (15 ms)",    ms: 15),
+    Speed(label: "Slow (100 ms)",  ms: 100),
+    Speed(label: "Normal (40 ms)", ms: 40),
+    Speed(label: "Fast (15 ms)",   ms: 15),
 ]
 
 private let startDelays: [Speed] = [
@@ -24,6 +25,15 @@ private let startDelays: [Speed] = [
     Speed(label: "300 ms", ms: 300),
     Speed(label: "500 ms", ms: 500),
     Speed(label: "750 ms", ms: 750),
+]
+
+private let symbols: [(title: String, char: String)] = [
+    ("[ bracket",   "["),
+    ("] bracket",   "]"),
+    ("{ brace",     "{"),
+    ("} brace",     "}"),
+    ("\\ backslash", "\\"),
+    ("| pipe",      "|"),
 ]
 
 private func currentDelay() -> Int {
@@ -36,11 +46,16 @@ private func currentStartDelay() -> Int {
     return stored > 0 ? stored : 300
 }
 
+private func isRdpMode() -> Bool {
+    UserDefaults.standard.bool(forKey: kRdpModeKey)
+}
+
 class MenuBarController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var hotkeyManager: HotkeyManager?
     private var speedItems: [NSMenuItem] = []
     private var startDelayItems: [NSMenuItem] = []
+    private var rdpModeItem: NSMenuItem?
 
     private var currentToken: CancellationToken?
     private var escHotKeyRef: EventHotKeyRef?
@@ -64,6 +79,23 @@ class MenuBarController: NSObject {
         let pasteItem = NSMenuItem(title: "Paste via Typing  ⌃⌥⌘V", action: #selector(pasteViaTyping), keyEquivalent: "")
         pasteItem.target = self
         menu.addItem(pasteItem)
+
+        menu.addItem(.separator())
+
+        for s in symbols {
+            let item = NSMenuItem(title: s.title, action: #selector(insertSymbol(_:)), keyEquivalent: "")
+            item.representedObject = s.char
+            item.target = self
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+
+        let rdpItem = NSMenuItem(title: "Windows RDP Mode", action: #selector(toggleRdpMode), keyEquivalent: "")
+        rdpItem.target = self
+        rdpItem.state = isRdpMode() ? .on : .off
+        menu.addItem(rdpItem)
+        rdpModeItem = rdpItem
 
         menu.addItem(.separator())
 
@@ -97,9 +129,9 @@ class MenuBarController: NSObject {
 
         menu.addItem(.separator())
 
-        let statusItem2 = NSMenuItem(title: "Status…", action: #selector(showStatus), keyEquivalent: "")
-        statusItem2.target = self
-        menu.addItem(statusItem2)
+        let statusMenuItem = NSMenuItem(title: "Status…", action: #selector(showStatus), keyEquivalent: "")
+        statusMenuItem.target = self
+        menu.addItem(statusMenuItem)
 
         menu.addItem(.separator())
 
@@ -178,12 +210,35 @@ class MenuBarController: NSObject {
         MenuBarController.onEscape = nil
     }
 
+    @objc private func toggleRdpMode() {
+        let newValue = !isRdpMode()
+        UserDefaults.standard.set(newValue, forKey: kRdpModeKey)
+        rdpModeItem?.state = newValue ? .on : .off
+        flog("Windows RDP Mode: \(newValue ? "ON" : "OFF")")
+    }
+
+    @objc private func insertSymbol(_ sender: NSMenuItem) {
+        guard let char = (sender.representedObject as? String)?.first else { return }
+        let startDelay = currentStartDelay()
+        let rdp = isRdpMode()
+        flog("Insert '\(char)' — mode: \(rdp ? "RDP (Alt+numpad)" : "macOS (charMap)")")
+        DispatchQueue.global(qos: .userInitiated).async {
+            Thread.sleep(forTimeInterval: Double(startDelay) / 1000.0)
+            if rdp {
+                KeyboardSimulator.typeSymbol(char)
+            } else {
+                KeyboardSimulator.typeViaCharMap(char)
+            }
+        }
+    }
+
     @objc private func showStatus() {
         let trusted = AXIsProcessTrusted()
         let clip = NSPasteboard.general.string(forType: .string)
 
         var lines: [String] = []
         lines.append(trusted ? "✅ Accessibility: granted" : "❌ Accessibility: NOT granted — relaunch after granting in System Settings → Privacy & Security → Accessibility")
+        lines.append("🖥  Windows RDP Mode: \(isRdpMode() ? "ON" : "OFF")")
         if let text = clip {
             let preview = text.prefix(60).replacingOccurrences(of: "\n", with: "↵")
             lines.append("📋 Clipboard (\(text.count) chars): \"\(preview)\(text.count > 60 ? "…" : "")\"")
