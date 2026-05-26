@@ -169,7 +169,7 @@ class MenuBarController: NSObject {
             flog("Start delay: sleeping \(startDelay)ms")
             Thread.sleep(forTimeInterval: Double(startDelay) / 1000.0)
             flog("Start delay done, handing off to KeyboardSimulator")
-            KeyboardSimulator.type(text, delayMs: delay, token: token)
+            KeyboardSimulator.type(text, delayMs: delay, token: token, rdpMode: isRdpMode())
             DispatchQueue.main.async {
                 self?.finishTyping()
             }

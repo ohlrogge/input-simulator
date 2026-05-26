@@ -107,8 +107,8 @@ enum KeyboardSimulator {
         flog("KeyboardSimulator warmed up: \(charMap.count) characters mapped")
     }
 
-    static func type(_ text: String, delayMs: Int, token: CancellationToken) {
-        flog("Typing started: \(text.count) chars, delay=\(delayMs)ms")
+    static func type(_ text: String, delayMs: Int, token: CancellationToken, rdpMode: Bool = false) {
+        flog("Typing started: \(text.count) chars, delay=\(delayMs)ms, rdpMode=\(rdpMode)")
         var typed = 0
         var skipped = 0
 
@@ -120,12 +120,24 @@ enum KeyboardSimulator {
             if let keyCode = specialKeys[char] {
                 postKey(KeyStroke(keyCode: keyCode, flags: []))
                 typed += 1
-            } else if let stroke = charMap[char] {
-                postKey(stroke)
-                typed += 1
+            } else if rdpMode {
+                // RDP mode: use Alt+numpad for non-ASCII chars (layout-independent on Windows),
+                // key codes for ASCII chars (RDP reads virtual key code from CGEvent).
+                if let scalar = char.unicodeScalars.first, scalar.value > 127 && scalar.value <= 255 {
+                    postAltNumpad(ascii: scalar.value)
+                    typed += 1
+                } else if let stroke = charMap[char] {
+                    postKey(stroke)
+                    typed += 1
+                } else {
+                    flog("Skipping unmapped character U+\(String(char.unicodeScalars.first!.value, radix: 16))")
+                    skipped += 1
+                }
             } else {
-                flog("Skipping unmapped character U+\(String(char.unicodeScalars.first!.value, radix: 16))")
-                skipped += 1
+                // macOS mode: send the Unicode string directly — works for all characters
+                // including Umlauts, regardless of the active keyboard layout.
+                postUnicode(char)
+                typed += 1
             }
 
             if index % 50 == 49 {
@@ -138,14 +150,12 @@ enum KeyboardSimulator {
         flog("Typing complete: \(typed) typed, \(skipped) skipped")
     }
 
-    // Types a single character via the charMap — works in macOS apps.
+    // Types a single character via unicode string injection — works in macOS apps.
     static func typeViaCharMap(_ char: Character) {
         if let keyCode = specialKeys[char] {
             postKey(KeyStroke(keyCode: keyCode, flags: []))
-        } else if let stroke = charMap[char] {
-            postKey(stroke)
         } else {
-            flog("typeViaCharMap: no mapping for '\(char)'")
+            postUnicode(char)
         }
     }
 
@@ -176,6 +186,20 @@ enum KeyboardSimulator {
             }
         }
         postRaw(0x3A, down: false, flags: []) // Left Alt up
+    }
+
+    // Injects a character directly as a Unicode string — macOS apps receive the
+    // correct glyph regardless of the current keyboard layout or input method.
+    private static func postUnicode(_ char: Character) {
+        let utf16 = Array(String(char).utf16)
+        guard !utf16.isEmpty,
+              let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
+              let up   = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
+        else { return }
+        down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
+        up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
     }
 
     private static func postRaw(_ keyCode: CGKeyCode, down: Bool, flags: CGEventFlags) {
