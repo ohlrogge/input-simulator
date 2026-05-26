@@ -38,7 +38,8 @@ private let symbols: [(title: String, char: String)] = [
 
 private func currentDelay() -> Int {
     let stored = UserDefaults.standard.integer(forKey: kDelayKey)
-    return stored > 0 ? stored : 40
+    // 0 is a valid custom value; only fall back to default when key was never set
+    return UserDefaults.standard.object(forKey: kDelayKey) == nil ? 40 : max(0, stored)
 }
 
 private func currentStartDelay() -> Int {
@@ -54,6 +55,7 @@ class MenuBarController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var hotkeyManager: HotkeyManager?
     private var speedItems: [NSMenuItem] = []
+    private var customSpeedItem: NSMenuItem?
     private var startDelayItems: [NSMenuItem] = []
     private var rdpModeItem: NSMenuItem?
 
@@ -100,15 +102,19 @@ class MenuBarController: NSObject {
         menu.addItem(.separator())
 
         let speedSubmenu = NSMenu()
-        let delay = currentDelay()
         for speed in speeds {
             let item = NSMenuItem(title: speed.label, action: #selector(setSpeed(_:)), keyEquivalent: "")
             item.target = self
             item.tag = speed.ms
-            item.state = speed.ms == delay ? .on : .off
             speedSubmenu.addItem(item)
             speedItems.append(item)
         }
+        speedSubmenu.addItem(.separator())
+        let customItem = NSMenuItem(title: "Custom…", action: #selector(setCustomSpeed), keyEquivalent: "")
+        customItem.target = self
+        speedSubmenu.addItem(customItem)
+        customSpeedItem = customItem
+        updateSpeedCheckmarks()
         let speedItem = NSMenuItem(title: "Typing Speed", action: nil, keyEquivalent: "")
         speedItem.submenu = speedSubmenu
         menu.addItem(speedItem)
@@ -253,9 +259,43 @@ class MenuBarController: NSObject {
         alert.runModal()
     }
 
+    private func updateSpeedCheckmarks() {
+        let delay = currentDelay()
+        let isPreset = speeds.contains { $0.ms == delay }
+        speedItems.forEach { $0.state = $0.tag == delay ? .on : .off }
+        if isPreset {
+            customSpeedItem?.title = "Custom…"
+            customSpeedItem?.state = .off
+        } else {
+            customSpeedItem?.title = "Custom (\(delay) ms)"
+            customSpeedItem?.state = .on
+        }
+    }
+
     @objc private func setSpeed(_ sender: NSMenuItem) {
         UserDefaults.standard.set(sender.tag, forKey: kDelayKey)
-        speedItems.forEach { $0.state = $0.tag == sender.tag ? .on : .off }
+        updateSpeedCheckmarks()
+    }
+
+    @objc private func setCustomSpeed() {
+        let alert = NSAlert()
+        alert.messageText = "Custom Typing Speed"
+        alert.informativeText = "Delay between keystrokes in milliseconds (minimum 5 ms):"
+        alert.addButton(withTitle: "Set")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
+        input.stringValue = "\(currentDelay())"
+        input.alignment = .right
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let raw = input.stringValue.trimmingCharacters(in: .whitespaces)
+        guard let value = Int(raw), value >= 5 else { return }
+        UserDefaults.standard.set(value, forKey: kDelayKey)
+        flog("Custom typing speed set: \(value) ms")
+        updateSpeedCheckmarks()
     }
 
     @objc private func setStartDelay(_ sender: NSMenuItem) {
