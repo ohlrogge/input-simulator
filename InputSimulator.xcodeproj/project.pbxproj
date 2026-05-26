@@ -15,6 +15,7 @@
 		AAAA00000000000000000025 /* PermissionChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAA00000000000000000015 /* PermissionChecker.swift */; };
 		AAAA00000000000000000026 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AAAA00000000000000000018 /* Cocoa.framework */; };
 		AAAA00000000000000000027 /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AAAA00000000000000000019 /* Carbon.framework */; };
+		AAAA00000000000000000028 /* FileLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAA00000000000000000029 /* FileLogger.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,6 +26,7 @@
 		AAAA00000000000000000014 /* KeyboardSimulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSimulator.swift; sourceTree = "<group>"; };
 		AAAA00000000000000000015 /* PermissionChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionChecker.swift; sourceTree = "<group>"; };
 		AAAA00000000000000000016 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AAAA00000000000000000029 /* FileLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileLogger.swift; sourceTree = "<group>"; };
 		AAAA00000000000000000017 /* InputSimulator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = InputSimulator.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AAAA00000000000000000018 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
 		AAAA00000000000000000019 /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
@@ -61,6 +63,7 @@
 				AAAA00000000000000000013 /* HotkeyManager.swift */,
 				AAAA00000000000000000014 /* KeyboardSimulator.swift */,
 				AAAA00000000000000000015 /* PermissionChecker.swift */,
+				AAAA00000000000000000029 /* FileLogger.swift */,
 				AAAA00000000000000000016 /* Info.plist */,
 			);
 			path = InputSimulator;
@@ -152,6 +155,7 @@
 				AAAA00000000000000000023 /* HotkeyManager.swift in Sources */,
 				AAAA00000000000000000024 /* KeyboardSimulator.swift in Sources */,
 				AAAA00000000000000000025 /* PermissionChecker.swift in Sources */,
+				AAAA00000000000000000028 /* FileLogger.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

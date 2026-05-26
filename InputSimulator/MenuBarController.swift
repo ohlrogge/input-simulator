@@ -1,6 +1,9 @@
 import AppKit
 import ApplicationServices
 import Carbon
+import os
+
+private let log = Logger(subsystem: "com.niklas.inputsimulator", category: "menubar")
 
 private let kDelayKey     = "typingDelayMs"
 private let kStartDelayKey = "startDelayMs"
@@ -106,9 +109,17 @@ class MenuBarController: NSObject {
     }
 
     @objc private func pasteViaTyping() {
-        guard currentToken == nil else { return } // already typing
-        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        guard currentToken == nil else {
+            flog("Paste triggered but already typing — ignored")
+            return
+        }
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+            flog("Paste triggered but clipboard is empty or non-text")
+            return
+        }
         let delay = currentDelay()
+        let startDelay = currentStartDelay()
+        flog("Paste triggered: \(text.count) chars, startDelay=\(startDelay)ms, typingDelay=\(delay)ms")
 
         let token = CancellationToken()
         currentToken = token
@@ -116,9 +127,10 @@ class MenuBarController: NSObject {
 
         statusItem.button?.image = NSImage(systemSymbolName: "keyboard.fill", accessibilityDescription: "Typing… (ESC to cancel)")
 
-        let startDelay = currentStartDelay()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            flog("Start delay: sleeping \(startDelay)ms")
             Thread.sleep(forTimeInterval: Double(startDelay) / 1000.0)
+            flog("Start delay done, handing off to KeyboardSimulator")
             KeyboardSimulator.type(text, delayMs: delay, token: token)
             DispatchQueue.main.async {
                 self?.finishTyping()
@@ -127,6 +139,7 @@ class MenuBarController: NSObject {
     }
 
     private func finishTyping() {
+        flog("Typing session ended, resetting state")
         unregisterEscape()
         currentToken = nil
         statusItem.button?.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Input Simulator")

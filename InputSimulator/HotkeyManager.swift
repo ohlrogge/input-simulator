@@ -1,4 +1,7 @@
 import Carbon
+import os
+
+private let log = Logger(subsystem: "com.niklas.inputsimulator", category: "hotkey")
 
 class HotkeyManager {
     private var hotKeyRef: EventHotKeyRef?
@@ -25,7 +28,10 @@ class HotkeyManager {
                 GetEventParameter(event, EventParamName(kEventParamDirectObject),
                                   EventParamType(typeEventHotKeyID), nil,
                                   MemoryLayout<EventHotKeyID>.size, nil, &hkID)
-                if hkID.id == 1 { HotkeyManager.onTrigger?() }
+                if hkID.id == 1 {
+                    flog("Hotkey ⌃⌥⌘V fired")
+                    HotkeyManager.onTrigger?()
+                }
                 return noErr
             },
             1,
@@ -36,7 +42,7 @@ class HotkeyManager {
 
         // ⌃⌥⌘V  (controlKey | optionKey | cmdKey)
         let id = EventHotKeyID(signature: 0x4953494D /* ISIM */, id: 1)
-        RegisterEventHotKey(
+        let result = RegisterEventHotKey(
             UInt32(kVK_ANSI_V),
             UInt32(controlKey | optionKey | cmdKey),
             id,
@@ -44,6 +50,11 @@ class HotkeyManager {
             0,
             &hotKeyRef
         )
+        if result == noErr {
+            flog("Hotkey ⌃⌥⌘V registered successfully")
+        } else {
+            flog("Failed to register hotkey ⌃⌥⌘V: OSStatus \(result)")
+        }
     }
 
     deinit {
