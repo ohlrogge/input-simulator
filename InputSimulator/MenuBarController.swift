@@ -1,7 +1,9 @@
 import AppKit
+import ApplicationServices
 import Carbon
 
-private let kDelayKey = "typingDelayMs"
+private let kDelayKey     = "typingDelayMs"
+private let kStartDelayKey = "startDelayMs"
 
 private struct Speed {
     let label: String
@@ -14,15 +16,28 @@ private let speeds: [Speed] = [
     Speed(label: "Fast (15 ms)",    ms: 15),
 ]
 
+private let startDelays: [Speed] = [
+    Speed(label: "100 ms", ms: 100),
+    Speed(label: "300 ms", ms: 300),
+    Speed(label: "500 ms", ms: 500),
+    Speed(label: "750 ms", ms: 750),
+]
+
 private func currentDelay() -> Int {
     let stored = UserDefaults.standard.integer(forKey: kDelayKey)
     return stored > 0 ? stored : 40
+}
+
+private func currentStartDelay() -> Int {
+    let stored = UserDefaults.standard.integer(forKey: kStartDelayKey)
+    return stored > 0 ? stored : 300
 }
 
 class MenuBarController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var hotkeyManager: HotkeyManager?
     private var speedItems: [NSMenuItem] = []
+    private var startDelayItems: [NSMenuItem] = []
 
     private var currentToken: CancellationToken?
     private var escHotKeyRef: EventHotKeyRef?
@@ -63,6 +78,26 @@ class MenuBarController: NSObject {
         speedItem.submenu = speedSubmenu
         menu.addItem(speedItem)
 
+        let startDelaySubmenu = NSMenu()
+        let startDelay = currentStartDelay()
+        for sd in startDelays {
+            let item = NSMenuItem(title: sd.label, action: #selector(setStartDelay(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = sd.ms
+            item.state = sd.ms == startDelay ? .on : .off
+            startDelaySubmenu.addItem(item)
+            startDelayItems.append(item)
+        }
+        let startDelayItem = NSMenuItem(title: "Start Delay", action: nil, keyEquivalent: "")
+        startDelayItem.submenu = startDelaySubmenu
+        menu.addItem(startDelayItem)
+
+        menu.addItem(.separator())
+
+        let statusItem2 = NSMenuItem(title: "Status…", action: #selector(showStatus), keyEquivalent: "")
+        statusItem2.target = self
+        menu.addItem(statusItem2)
+
         menu.addItem(.separator())
 
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -81,7 +116,9 @@ class MenuBarController: NSObject {
 
         statusItem.button?.image = NSImage(systemSymbolName: "keyboard.fill", accessibilityDescription: "Typing… (ESC to cancel)")
 
+        let startDelay = currentStartDelay()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            Thread.sleep(forTimeInterval: Double(startDelay) / 1000.0)
             KeyboardSimulator.type(text, delayMs: delay, token: token)
             DispatchQueue.main.async {
                 self?.finishTyping()
@@ -128,8 +165,33 @@ class MenuBarController: NSObject {
         MenuBarController.onEscape = nil
     }
 
+    @objc private func showStatus() {
+        let trusted = AXIsProcessTrusted()
+        let clip = NSPasteboard.general.string(forType: .string)
+
+        var lines: [String] = []
+        lines.append(trusted ? "✅ Accessibility: granted" : "❌ Accessibility: NOT granted — relaunch after granting in System Settings → Privacy & Security → Accessibility")
+        if let text = clip {
+            let preview = text.prefix(60).replacingOccurrences(of: "\n", with: "↵")
+            lines.append("📋 Clipboard (\(text.count) chars): \"\(preview)\(text.count > 60 ? "…" : "")\"")
+        } else {
+            lines.append("📋 Clipboard: empty or non-text")
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Input Simulator Status"
+        alert.informativeText = lines.joined(separator: "\n\n")
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     @objc private func setSpeed(_ sender: NSMenuItem) {
         UserDefaults.standard.set(sender.tag, forKey: kDelayKey)
         speedItems.forEach { $0.state = $0.tag == sender.tag ? .on : .off }
+    }
+
+    @objc private func setStartDelay(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.tag, forKey: kStartDelayKey)
+        startDelayItems.forEach { $0.state = $0.tag == sender.tag ? .on : .off }
     }
 }
