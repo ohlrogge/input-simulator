@@ -121,13 +121,14 @@ enum KeyboardSimulator {
                 postKey(KeyStroke(keyCode: keyCode, flags: []))
                 typed += 1
             } else if rdpMode {
-                // RDP mode: use Alt+numpad for non-ASCII chars (layout-independent on Windows),
-                // key codes for ASCII chars (RDP reads virtual key code from CGEvent).
-                if let scalar = char.unicodeScalars.first, scalar.value > 127 && scalar.value <= 255 {
-                    postAltNumpad(ascii: scalar.value)
-                    typed += 1
-                } else if let stroke = charMap[char] {
+                // RDP mode: prefer key codes from charMap for ASCII (RDP reads virtual key codes).
+                // Fall back to Alt+numpad for anything not in the map (e.g. ~ on QWERTZ is a dead
+                // key and never appears in charMap) and for all non-ASCII Latin chars.
+                if let stroke = charMap[char] {
                     postKey(stroke)
+                    typed += 1
+                } else if let scalar = char.unicodeScalars.first, scalar.value >= 32 && scalar.value <= 255 {
+                    postAltNumpad(ascii: scalar.value)
                     typed += 1
                 } else {
                     flog("Skipping unmapped character U+\(String(char.unicodeScalars.first!.value, radix: 16))")
