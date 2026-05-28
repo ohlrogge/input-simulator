@@ -34,6 +34,7 @@ private let symbols: [(title: String, char: String)] = [
     ("} brace",     "}"),
     ("\\ backslash", "\\"),
     ("| pipe",      "|"),
+    ("~ tilde",     "~"),
 ]
 
 private func currentDelay() -> Int {

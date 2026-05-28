@@ -20,12 +20,19 @@ macOS menu bar utility that types clipboard content as simulated keystrokes — 
 - macOS 13 Ventura or later
 - **Accessibility permission** — grant it in *System Settings → Privacy & Security → Accessibility*; the app will prompt on first launch
 
-## Build
+## Build & Install
 
-Open `InputSimulator.xcodeproj` in Xcode and press `⌘R`.  
-The app is ad-hoc signed and sandboxing is disabled — no notarization needed for personal use.
+Run the install script — it builds a Release binary and copies it to `~/Applications`:
 
-> **Note:** Every time Xcode rebuilds the binary macOS revokes the Accessibility trust for the new binary. Re-toggle the permission in System Settings after each rebuild, or copy the built `.app` to `~/Applications` and use that copy going forward.
+```bash
+./install.sh
+```
+
+Then open the app and grant Accessibility permission in **System Settings → Privacy & Security → Accessibility**.
+
+> **Note:** If the script fails with an `xcode-select` error, run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` once and retry.
+
+> **Note:** Every time the binary is rebuilt, macOS revokes the Accessibility trust. Always run from `~/Applications/InputSimulator.app` (not from the build folder) to keep the permission stable.
 
 ## Usage
 
@@ -33,6 +40,24 @@ The app is ad-hoc signed and sandboxing is disabled — no notarization needed f
 2. Click into the target window (the start delay gives you time to do this after pressing the hotkey).
 3. Press `⌃⌥⌘V` — or open the menu bar icon and choose **Paste via Typing**.
 4. Press `ESC` at any time to stop.
+
+## Testing
+
+Copy the snippet below to the clipboard, click into the target window, and trigger `⌃⌥⌘V` with **Windows RDP Mode on**. Scan each line and confirm the character on the right matches the label on the left.
+
+```
+brackets:  [ ]
+braces:    { }
+backslash: \
+pipe:      |
+tilde:     ~
+hash:      #
+at:        @
+backtick:  `
+percent:   %>%
+quotes:    " '
+umlaut:    ä ö ü Ä Ö Ü ß
+```
 
 ## Logs
 

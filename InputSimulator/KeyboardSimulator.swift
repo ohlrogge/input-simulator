@@ -122,10 +122,19 @@ enum KeyboardSimulator {
                 typed += 1
             } else if rdpMode {
                 // RDP mode: prefer key codes from charMap for ASCII (RDP reads virtual key codes).
-                // Fall back to Alt+numpad for anything not in the map (e.g. ~ on QWERTZ is a dead
-                // key and never appears in charMap) and for all non-ASCII Latin chars.
+                // Exception: chars that require the Option/Alt modifier (e.g. [ ] { } \ | on QWERTZ)
+                // must go through Alt+numpad instead — browsers intercept Option+key combinations
+                // before the HTML5 RDP client sees them, so the key code approach breaks there.
+                // Alt+numpad sequences are forwarded correctly by browser-based RDP clients and are
+                // layout-independent on the Windows side, so this is also more robust for native RDP.
+                // ~ is a dead key on QWERTZ and never enters charMap, so it falls through to Alt+numpad below.
                 if let stroke = charMap[char] {
-                    postKey(stroke)
+                    if stroke.flags.contains(.maskAlternate),
+                       let scalar = char.unicodeScalars.first, scalar.value >= 32 && scalar.value <= 127 {
+                        postAltNumpad(ascii: scalar.value)
+                    } else {
+                        postKey(stroke)
+                    }
                     typed += 1
                 } else if let scalar = char.unicodeScalars.first, scalar.value >= 32 && scalar.value <= 255 {
                     postAltNumpad(ascii: scalar.value)
