@@ -68,12 +68,20 @@ echo "    Build complete: ./build/InputSimulator.app"
 
 echo ""
 echo "==> Installing to ~/Applications…"
-echo "    Quitting running instance (if any)…"
-pkill -x InputSimulator || true
-sleep 0.5
-rm -rf ~/Applications/InputSimulator.app
-cp -r ./build/InputSimulator.app ~/Applications/
-echo "    Installed: ~/Applications/InputSimulator.app"
+CURRENT_COMMIT=$(git rev-parse HEAD)
+INSTALLED_FILE="$HOME/.inputsimulator_installed_commit"
+INSTALLED_COMMIT=$(cat "$INSTALLED_FILE" 2>/dev/null || echo "none")
+if [[ "$CURRENT_COMMIT" == "$INSTALLED_COMMIT" ]]; then
+    echo "    Already installed at current version ($(git rev-parse --short HEAD)) — skipping."
+else
+    echo "    Quitting running instance (if any)…"
+    pkill -x InputSimulator || true
+    sleep 0.5
+    rm -rf ~/Applications/InputSimulator.app
+    cp -r ./build/InputSimulator.app ~/Applications/
+    echo "$CURRENT_COMMIT" > "$INSTALLED_FILE"
+    echo "    Installed: ~/Applications/InputSimulator.app"
+fi
 
 echo ""
 echo "==> Launching InputSimulator…"
