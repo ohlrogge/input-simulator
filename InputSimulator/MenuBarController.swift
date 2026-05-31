@@ -61,9 +61,7 @@ class MenuBarController: NSObject {
     private var rdpModeItem: NSMenuItem?
 
     private var currentToken: CancellationToken?
-    private var escHotKeyRef: EventHotKeyRef?
-    private var escHandlerRef: EventHandlerRef?
-    private static var onEscape: (() -> Void)?
+    private var escMonitor: Any?
 
     override init() {
         super.init()
@@ -185,36 +183,22 @@ class MenuBarController: NSObject {
     }
 
     private func registerEscape() {
-        MenuBarController.onEscape = { [weak self] in
-            self?.currentToken?.cancel()
-            self?.finishTyping()
+        // NSEvent global monitor sees all key events regardless of which app is focused —
+        // more reliable than RegisterEventHotKey for plain ESC, which browsers intercept first.
+        escMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == UInt16(kVK_Escape) {
+                flog("ESC detected — cancelling typing")
+                self?.currentToken?.cancel()
+                DispatchQueue.main.async { self?.finishTyping() }
+            }
         }
-
-        var eventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, event, _ -> OSStatus in
-                var hkID = EventHotKeyID()
-                GetEventParameter(event, EventParamName(kEventParamDirectObject),
-                                  EventParamType(typeEventHotKeyID), nil,
-                                  MemoryLayout<EventHotKeyID>.size, nil, &hkID)
-                if hkID.id == 2 { MenuBarController.onEscape?() }
-                return noErr
-            },
-            1,
-            &eventSpec,
-            nil,
-            &escHandlerRef
-        )
-
-        let id = EventHotKeyID(signature: 0x49534543 /* ISEC */, id: 2)
-        RegisterEventHotKey(UInt32(kVK_Escape), 0, id, GetApplicationEventTarget(), 0, &escHotKeyRef)
     }
 
     private func unregisterEscape() {
-        if let ref = escHotKeyRef { UnregisterEventHotKey(ref); escHotKeyRef = nil }
-        if let ref = escHandlerRef { RemoveEventHandler(ref); escHandlerRef = nil }
-        MenuBarController.onEscape = nil
+        if let monitor = escMonitor {
+            NSEvent.removeMonitor(monitor)
+            escMonitor = nil
+        }
     }
 
     @objc private func toggleRdpMode() {
