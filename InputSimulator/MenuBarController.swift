@@ -265,7 +265,7 @@ class MenuBarController: NSObject {
     @objc private func setCustomSpeed() {
         let alert = NSAlert()
         alert.messageText = "Custom Typing Speed"
-        alert.informativeText = "Delay between keystrokes in milliseconds (minimum 5 ms):"
+        alert.informativeText = "Delay between keystrokes in milliseconds (minimum 1 ms):"
         alert.addButton(withTitle: "Set")
         alert.addButton(withTitle: "Cancel")
 
@@ -277,7 +277,7 @@ class MenuBarController: NSObject {
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let raw = input.stringValue.trimmingCharacters(in: .whitespaces)
-        guard let value = Int(raw), value >= 5 else { return }
+        guard let value = Int(raw), value >= 1 else { return }
         UserDefaults.standard.set(value, forKey: kDelayKey)
         flog("Custom typing speed set: \(value) ms")
         updateSpeedCheckmarks()
