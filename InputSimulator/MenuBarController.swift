@@ -37,6 +37,7 @@ private let symbols: [(title: String, char: String)] = [
     ("~ tilde",     "~"),
 ]
 
+
 private func currentDelay() -> Int {
     let stored = UserDefaults.standard.integer(forKey: kDelayKey)
     // 0 is a valid custom value; only fall back to default when key was never set

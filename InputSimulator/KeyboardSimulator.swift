@@ -179,14 +179,17 @@ enum KeyboardSimulator {
         postAltNumpad(ascii: scalar.value)
     }
 
-    // Sends Alt+0XXX on the numpad — Windows interprets this as the ASCII character.
+    // Sends Alt+XXX on the numpad without leading zeros — Windows 11 accepts OEM short-form.
+    // Verified on Windows 11 Western locale; saves 1-2 numpad events per character.
     private static func postAltNumpad(ascii: UInt32) {
         let numpadCodes: [UInt32: CGKeyCode] = [
             0: 0x52, 1: 0x53, 2: 0x54, 3: 0x55,
             4: 0x56, 5: 0x57, 6: 0x58, 7: 0x59,
             8: 0x5B, 9: 0x5C,
         ]
-        let digits: [UInt32] = [0, ascii / 100, (ascii % 100) / 10, ascii % 10]
+        var n = ascii
+        var digits: [UInt32] = []
+        repeat { digits.insert(n % 10, at: 0); n /= 10 } while n > 0
 
         postRaw(0x3A, down: true,  flags: .maskAlternate) // Left Alt down
         for d in digits {
