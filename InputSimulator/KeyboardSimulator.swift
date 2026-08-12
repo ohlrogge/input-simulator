@@ -24,6 +24,21 @@ private struct KeyStroke {
     let flags: CGEventFlags
 }
 
+// Which system receives the keystrokes. Raw values are persisted in UserDefaults.
+enum TargetSystem: Int {
+    case macOS         = 0 // Unicode string injection
+    case rdpBrowser    = 1 // RDP client running inside a browser (FortiClient)
+    case rdpWindowsApp = 2 // native Windows App on macOS
+
+    var label: String {
+        switch self {
+        case .macOS:         return "macOS"
+        case .rdpBrowser:    return "RDP im Browser"
+        case .rdpWindowsApp: return "RDP Windows App"
+        }
+    }
+}
+
 // Builds a character → (keyCode, modifiers) map from the current keyboard layout.
 // RDP reads the virtual key code from CGEvents, not the Unicode string, so we must
 // send the correct key code for each character rather than using virtualKey=0.
@@ -107,8 +122,8 @@ enum KeyboardSimulator {
         flog("KeyboardSimulator warmed up: \(charMap.count) characters mapped")
     }
 
-    static func type(_ text: String, delayMs: Int, token: CancellationToken, rdpMode: Bool = false) {
-        flog("Typing started: \(text.count) chars, delay=\(delayMs)ms, rdpMode=\(rdpMode)")
+    static func type(_ text: String, delayMs: Int, token: CancellationToken, target: TargetSystem = .macOS) {
+        flog("Typing started: \(text.count) chars, delay=\(delayMs)ms, target=\(target.label)")
         var typed = 0
         var skipped = 0
 
@@ -120,34 +135,18 @@ enum KeyboardSimulator {
             if let keyCode = specialKeys[char] {
                 postKey(KeyStroke(keyCode: keyCode, flags: []))
                 typed += 1
-            } else if rdpMode {
-                // RDP mode: prefer key codes from charMap for ASCII (RDP reads virtual key codes).
-                // Exception: chars that require the Option/Alt modifier (e.g. [ ] { } \ | on QWERTZ)
-                // must go through Alt+numpad instead — browsers intercept Option+key combinations
-                // before the HTML5 RDP client sees them, so the key code approach breaks there.
-                // Alt+numpad sequences are forwarded correctly by browser-based RDP clients and are
-                // layout-independent on the Windows side, so this is also more robust for native RDP.
-                // ~ is a dead key on QWERTZ and never enters charMap, so it falls through to Alt+numpad below.
-                if let stroke = charMap[char] {
-                    if stroke.flags.contains(.maskAlternate),
-                       let scalar = char.unicodeScalars.first, scalar.value >= 32 && scalar.value <= 127 {
-                        postAltNumpad(ascii: scalar.value)
-                    } else {
-                        postKey(stroke)
-                    }
-                    typed += 1
-                } else if let scalar = char.unicodeScalars.first, scalar.value >= 32 && scalar.value <= 255 {
-                    postAltNumpad(ascii: scalar.value)
-                    typed += 1
-                } else {
-                    flog("Skipping unmapped character U+\(String(char.unicodeScalars.first!.value, radix: 16))")
-                    skipped += 1
-                }
             } else {
-                // macOS mode: send the Unicode string directly — works for all characters
-                // including Umlauts, regardless of the active keyboard layout.
-                postUnicode(char)
-                typed += 1
+                switch target {
+                case .macOS:
+                    // Send the Unicode string directly — works for all characters including
+                    // Umlauts, regardless of the active keyboard layout.
+                    postUnicode(char)
+                    typed += 1
+                case .rdpBrowser:
+                    if typeViaRdp(char, native: false) { typed += 1 } else { skipped += 1 }
+                case .rdpWindowsApp:
+                    if typeViaRdp(char, native: true) { typed += 1 } else { skipped += 1 }
+                }
             }
 
             if index % 50 == 49 {
@@ -160,6 +159,36 @@ enum KeyboardSimulator {
         flog("Typing complete: \(typed) typed, \(skipped) skipped")
     }
 
+    // Types one character into an RDP session. Prefers key codes from charMap (RDP reads
+    // virtual key codes, not the Unicode string). Exception: chars that require the
+    // Option/Alt modifier (e.g. [ ] { } \ | on QWERTZ) go through Alt+numpad instead —
+    // browsers intercept Option+key before the HTML5 RDP client sees it, and on the Windows
+    // side those characters sit on entirely different keys anyway. Alt+numpad is forwarded
+    // correctly by both clients and is layout-independent on Windows.
+    // ~ is a dead key on QWERTZ and never enters charMap, so it falls through to Alt+numpad.
+    // `native` selects the Windows App variant, which sends modifiers as .flagsChanged events.
+    // Returns false if the character has no usable route.
+    private static func typeViaRdp(_ char: Character, native: Bool) -> Bool {
+        let scalar = char.unicodeScalars.first
+        if let stroke = charMap[char] {
+            if stroke.flags.contains(.maskAlternate),
+               let scalar, scalar.value >= 32 && scalar.value <= 127 {
+                postAltNumpad(ascii: scalar.value, native: native)
+            } else if native {
+                postKeyNative(stroke)
+            } else {
+                postKey(stroke)
+            }
+            return true
+        }
+        if let scalar, scalar.value >= 32 && scalar.value <= 255 {
+            postAltNumpad(ascii: scalar.value, native: native)
+            return true
+        }
+        flog("Skipping unmapped character U+\(String(scalar?.value ?? 0, radix: 16))")
+        return false
+    }
+
     // Types a single character via unicode string injection — works in macOS apps.
     static func typeViaCharMap(_ char: Character) {
         if let keyCode = specialKeys[char] {
@@ -170,18 +199,20 @@ enum KeyboardSimulator {
     }
 
     // Types a single symbol via Windows Alt+numpad — works in Windows RDP.
-    static func typeSymbol(_ char: Character) {
+    static func typeSymbol(_ char: Character, native: Bool = false) {
         guard let scalar = char.unicodeScalars.first, scalar.value <= 127 else {
             flog("typeSymbol: unsupported character '\(char)'")
             return
         }
-        flog("typeSymbol: '\(char)' (ASCII \(scalar.value)) via Alt+numpad")
-        postAltNumpad(ascii: scalar.value)
+        flog("typeSymbol: '\(char)' (ASCII \(scalar.value)) via Alt+numpad, native=\(native)")
+        postAltNumpad(ascii: scalar.value, native: native)
     }
 
     // Sends Alt+XXX on the numpad without leading zeros — Windows 11 accepts OEM short-form.
     // Verified on Windows 11 Western locale; saves 1-2 numpad events per character.
-    private static func postAltNumpad(ascii: UInt32) {
+    // In native mode Alt is held via .flagsChanged (see postModifier) and the digit events
+    // carry .maskNumericPad, because the Windows App distinguishes numpad from number-row keys.
+    private static func postAltNumpad(ascii: UInt32, native: Bool) {
         let numpadCodes: [UInt32: CGKeyCode] = [
             0: 0x52, 1: 0x53, 2: 0x54, 3: 0x55,
             4: 0x56, 5: 0x57, 6: 0x58, 7: 0x59,
@@ -191,14 +222,20 @@ enum KeyboardSimulator {
         var digits: [UInt32] = []
         repeat { digits.insert(n % 10, at: 0); n /= 10 } while n > 0
 
-        postRaw(0x3A, down: true,  flags: .maskAlternate) // Left Alt down
+        let digitFlags: CGEventFlags = native ? [.maskAlternate, .maskNumericPad] : .maskAlternate
+
+        if native { postModifier(0x3A, flags: .maskAlternate) }        // Left Alt down
+        else      { postRaw(0x3A, down: true, flags: .maskAlternate) }
+
         for d in digits {
             if let kc = numpadCodes[d] {
-                postRaw(kc, down: true,  flags: .maskAlternate)
-                postRaw(kc, down: false, flags: .maskAlternate)
+                postRaw(kc, down: true,  flags: digitFlags)
+                postRaw(kc, down: false, flags: digitFlags)
             }
         }
-        postRaw(0x3A, down: false, flags: []) // Left Alt up
+
+        if native { postModifier(0x3A, flags: []) }                    // Left Alt up
+        else      { postRaw(0x3A, down: false, flags: []) }
     }
 
     // Injects a character directly as a Unicode string — macOS apps receive the
@@ -235,5 +272,32 @@ enum KeyboardSimulator {
 
         if needsOption { postRaw(0x3A, down: false, flags: needsShift ? .maskShift : []) }
         if needsShift  { postRaw(0x38, down: false, flags: []) }
+    }
+
+    // Modifier changes on macOS are .flagsChanged events, not keyDown/keyUp. The native
+    // Windows App tracks the modifier state from those and ignores a keyDown on 0x38/0x3A,
+    // which is why Shift and Alt were swallowed there (= arrived as 0, ( as 8, # as 35).
+    // `flags` must carry the cumulative modifier state after this change, not just this key.
+    private static func postModifier(_ keyCode: CGKeyCode, flags: CGEventFlags) {
+        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true) else { return }
+        event.type = .flagsChanged
+        event.flags = flags
+        event.post(tap: .cghidEventTap)
+    }
+
+    // Same shape as postKey, but modifiers go out as real .flagsChanged events so the
+    // native Windows App picks them up.
+    private static func postKeyNative(_ stroke: KeyStroke) {
+        let needsShift  = stroke.flags.contains(.maskShift)
+        let needsOption = stroke.flags.contains(.maskAlternate)
+
+        if needsShift  { postModifier(0x38, flags: .maskShift) }
+        if needsOption { postModifier(0x3A, flags: stroke.flags) }
+
+        postRaw(stroke.keyCode, down: true,  flags: stroke.flags)
+        postRaw(stroke.keyCode, down: false, flags: stroke.flags)
+
+        if needsOption { postModifier(0x3A, flags: needsShift ? .maskShift : []) }
+        if needsShift  { postModifier(0x38, flags: []) }
     }
 }

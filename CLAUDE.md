@@ -14,12 +14,15 @@ After every rebuild, macOS revokes the Accessibility trust for the new binary. A
 
 ## Architecture
 
-All keystroke logic lives in `KeyboardSimulator.swift`. Two paths:
+All keystroke logic lives in `KeyboardSimulator.swift`. The `TargetSystem` enum selects one of three paths; the user picks it in the menu under **Zielsystem** (persisted as `targetSystem` in UserDefaults, migrated from the older `windowsRdpMode` boolean):
 
-- **macOS mode** (`rdpMode: false`): injects characters as Unicode strings via `CGEvent.keyboardSetUnicodeString`. Works for any character in any macOS app.
-- **RDP mode** (`rdpMode: true`): uses virtual key codes from the current keyboard layout (`buildCharacterMap`). Exception: characters that require the Option/Alt modifier (e.g. `[ ] { } \ | @` on German QWERTZ) are routed through **Alt+numpad sequences** instead, because browsers intercept `Option+key` CGEvents before the HTML5 RDP client sees them. Alt+numpad is forwarded correctly by browser-based RDP clients and is keyboard-layout-independent on the Windows side.
+- **`.macOS`**: injects characters as Unicode strings via `CGEvent.keyboardSetUnicodeString`. Works for any character in any macOS app. Neither RDP client understands these events — the native Windows App renders them as a run of `a`s.
+- **`.rdpBrowser`**: uses virtual key codes from the current keyboard layout (`buildCharacterMap`). Exception: characters that require the Option/Alt modifier (e.g. `[ ] { } \ | @` on German QWERTZ) are routed through **Alt+numpad sequences** instead, because browsers intercept `Option+key` CGEvents before the HTML5 RDP client sees them. Alt+numpad is forwarded correctly by browser-based RDP clients and is keyboard-layout-independent on the Windows side.
+- **`.rdpWindowsApp`**: same character routing as `.rdpBrowser`, but modifiers are sent as **`.flagsChanged` events** (`postModifier`) instead of `keyDown`/`keyUp` on keycodes `0x38`/`0x3A`, and numpad digits carry `.maskNumericPad`. The native Windows App tracks modifier state from real `flagsChanged` events and silently drops a `keyDown` on a modifier key — which made Shift and Alt vanish (`=` arrived as `0`, `(` as `8`, `#` as `35`). The browser client reads `event.flags` off the character event and is therefore unaffected either way.
 
 `~` is a dead key on German QWERTZ and never enters the charMap, so it always falls through to the Alt+numpad path automatically.
+
+Alt+numpad uses the short OEM form (`Alt+35`, no leading zero), verified on Windows 11 Western locale.
 
 ## Key files
 

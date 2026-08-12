@@ -7,7 +7,8 @@ private let log = Logger(subsystem: "com.niklas.inputsimulator", category: "menu
 
 private let kDelayKey      = "typingDelayMs"
 private let kStartDelayKey = "startDelayMs"
-private let kRdpModeKey    = "windowsRdpMode"
+private let kRdpModeKey    = "windowsRdpMode" // legacy, only read for migration
+private let kTargetKey     = "targetSystem"
 
 private struct Speed {
     let label: String
@@ -49,8 +50,14 @@ private func currentStartDelay() -> Int {
     return stored > 0 ? stored : 300
 }
 
-private func isRdpMode() -> Bool {
-    UserDefaults.standard.bool(forKey: kRdpModeKey)
+private let targets: [TargetSystem] = [.macOS, .rdpBrowser, .rdpWindowsApp]
+
+private func currentTarget() -> TargetSystem {
+    // Migration: installations that only ever saw the old boolean keep their setting.
+    guard UserDefaults.standard.object(forKey: kTargetKey) != nil else {
+        return UserDefaults.standard.bool(forKey: kRdpModeKey) ? .rdpBrowser : .macOS
+    }
+    return TargetSystem(rawValue: UserDefaults.standard.integer(forKey: kTargetKey)) ?? .macOS
 }
 
 class MenuBarController: NSObject {
@@ -59,7 +66,7 @@ class MenuBarController: NSObject {
     private var speedItems: [NSMenuItem] = []
     private var customSpeedItem: NSMenuItem?
     private var startDelayItems: [NSMenuItem] = []
-    private var rdpModeItem: NSMenuItem?
+    private var targetItems: [NSMenuItem] = []
 
     private var currentToken: CancellationToken?
     private var escMonitor: Any?
@@ -93,11 +100,19 @@ class MenuBarController: NSObject {
 
         menu.addItem(.separator())
 
-        let rdpItem = NSMenuItem(title: "Windows RDP Mode", action: #selector(toggleRdpMode), keyEquivalent: "")
-        rdpItem.target = self
-        rdpItem.state = isRdpMode() ? .on : .off
-        menu.addItem(rdpItem)
-        rdpModeItem = rdpItem
+        let targetSubmenu = NSMenu()
+        let activeTarget = currentTarget()
+        for t in targets {
+            let item = NSMenuItem(title: t.label, action: #selector(setTarget(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = t.rawValue
+            item.state = t == activeTarget ? .on : .off
+            targetSubmenu.addItem(item)
+            targetItems.append(item)
+        }
+        let targetItem = NSMenuItem(title: "Zielsystem", action: nil, keyEquivalent: "")
+        targetItem.submenu = targetSubmenu
+        menu.addItem(targetItem)
 
         menu.addItem(.separator())
 
@@ -169,7 +184,7 @@ class MenuBarController: NSObject {
             flog("Start delay: sleeping \(startDelay)ms")
             Thread.sleep(forTimeInterval: Double(startDelay) / 1000.0)
             flog("Start delay done, handing off to KeyboardSimulator")
-            KeyboardSimulator.type(text, delayMs: delay, token: token, rdpMode: isRdpMode())
+            KeyboardSimulator.type(text, delayMs: delay, token: token, target: currentTarget())
             DispatchQueue.main.async {
                 self?.finishTyping()
             }
@@ -202,24 +217,23 @@ class MenuBarController: NSObject {
         }
     }
 
-    @objc private func toggleRdpMode() {
-        let newValue = !isRdpMode()
-        UserDefaults.standard.set(newValue, forKey: kRdpModeKey)
-        rdpModeItem?.state = newValue ? .on : .off
-        flog("Windows RDP Mode: \(newValue ? "ON" : "OFF")")
+    @objc private func setTarget(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.tag, forKey: kTargetKey)
+        targetItems.forEach { $0.state = $0.tag == sender.tag ? .on : .off }
+        flog("Zielsystem: \(currentTarget().label)")
     }
 
     @objc private func insertSymbol(_ sender: NSMenuItem) {
         guard let char = (sender.representedObject as? String)?.first else { return }
         let startDelay = currentStartDelay()
-        let rdp = isRdpMode()
-        flog("Insert '\(char)' — mode: \(rdp ? "RDP (Alt+numpad)" : "macOS (charMap)")")
+        let target = currentTarget()
+        flog("Insert '\(char)' — target: \(target.label)")
         DispatchQueue.global(qos: .userInitiated).async {
             Thread.sleep(forTimeInterval: Double(startDelay) / 1000.0)
-            if rdp {
-                KeyboardSimulator.typeSymbol(char)
-            } else {
-                KeyboardSimulator.typeViaCharMap(char)
+            switch target {
+            case .macOS:         KeyboardSimulator.typeViaCharMap(char)
+            case .rdpBrowser:    KeyboardSimulator.typeSymbol(char)
+            case .rdpWindowsApp: KeyboardSimulator.typeSymbol(char, native: true)
             }
         }
     }
@@ -230,7 +244,7 @@ class MenuBarController: NSObject {
 
         var lines: [String] = []
         lines.append(trusted ? "✅ Accessibility: granted" : "❌ Accessibility: NOT granted — relaunch after granting in System Settings → Privacy & Security → Accessibility")
-        lines.append("🖥  Windows RDP Mode: \(isRdpMode() ? "ON" : "OFF")")
+        lines.append("🖥  Zielsystem: \(currentTarget().label)")
         if let text = clip {
             let preview = text.prefix(60).replacingOccurrences(of: "\n", with: "↵")
             lines.append("📋 Clipboard (\(text.count) chars): \"\(preview)\(text.count > 60 ? "…" : "")\"")
