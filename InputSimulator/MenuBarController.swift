@@ -50,7 +50,7 @@ private func currentStartDelay() -> Int {
     return stored > 0 ? stored : 300
 }
 
-private let targets: [TargetSystem] = [.macOS, .rdpBrowser, .rdpWindowsApp]
+private let targets: [TargetSystem] = [.macOS, .rdpBrowser]
 
 private func currentTarget() -> TargetSystem {
     // Migration: installations that only ever saw the old boolean keep their setting.
@@ -154,9 +154,6 @@ class MenuBarController: NSObject {
         statusMenuItem.target = self
         menu.addItem(statusMenuItem)
 
-        let diagItem = NSMenuItem(title: "Diagnose Windows App", action: #selector(runDiagnostics), keyEquivalent: "")
-        diagItem.target = self
-        menu.addItem(diagItem)
 
         menu.addItem(.separator())
 
@@ -235,28 +232,9 @@ class MenuBarController: NSObject {
         DispatchQueue.global(qos: .userInitiated).async {
             Thread.sleep(forTimeInterval: Double(startDelay) / 1000.0)
             switch target {
-            case .macOS:         KeyboardSimulator.typeViaCharMap(char)
-            case .rdpBrowser:    KeyboardSimulator.typeSymbol(char)
-            case .rdpWindowsApp: KeyboardSimulator.typeSymbol(char, native: true)
+            case .macOS:      KeyboardSimulator.typeViaCharMap(char)
+            case .rdpBrowser: KeyboardSimulator.typeSymbol(char)
             }
-        }
-    }
-
-    @objc private func runDiagnostics() {
-        guard currentToken == nil else {
-            flog("Diagnostics triggered but already typing — ignored")
-            return
-        }
-        let startDelay = currentStartDelay()
-        let token = CancellationToken()
-        currentToken = token
-        registerEscape()
-        statusItem.button?.image = NSImage(systemSymbolName: "keyboard.fill", accessibilityDescription: "Diagnose… (ESC to cancel)")
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            Thread.sleep(forTimeInterval: Double(startDelay) / 1000.0)
-            KeyboardSimulator.runWindowsAppDiagnostics(token: token)
-            DispatchQueue.main.async { self?.finishTyping() }
         }
     }
 
