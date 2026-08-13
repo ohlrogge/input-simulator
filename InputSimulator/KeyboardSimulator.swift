@@ -114,6 +114,17 @@ enum KeyboardSimulator {
 
     private static let charMap: [Character: KeyStroke] = buildCharacterMap()
 
+    private static let breatherEveryChars = 250
+    private static let breatherMs = 120
+
+    // A CGEvent keyDown must be followed by a keyUp far enough apart for the receiver to see
+    // a real press. Zero-length presses survive locally but get coalesced away under load.
+    private static let keyHoldMs = 4
+
+    // Counts events CGEvent(...) refused to create — without this the character just
+    // vanishes silently, which is indistinguishable from the remote dropping it.
+    private static var failedEvents = 0
+
     // Must be called once on the main thread before any typing begins.
     // TIS APIs are main-thread-only; this forces charMap to initialize there.
     static func warmUp() {
@@ -126,6 +137,7 @@ enum KeyboardSimulator {
         flog("Typing started: \(text.count) chars, delay=\(delayMs)ms, target=\(target.label)")
         var typed = 0
         var skipped = 0
+        failedEvents = 0
 
         for (index, char) in text.enumerated() {
             guard !token.isCancelled else {
@@ -152,9 +164,18 @@ enum KeyboardSimulator {
             }
 
             Thread.sleep(forTimeInterval: Double(delayMs) / 1000.0)
+
+            // Long pastes outrun the receiver: the RDP client's input queue and the remote
+            // Windows input buffer fill up after a few thousand keystrokes, after which
+            // characters get dropped or arrive out of order. A regular breather lets both
+            // drain. Cheap insurance — costs ~0.5 s per 1000 characters.
+            if index % breatherEveryChars == breatherEveryChars - 1 {
+                flog("Breather after \(index + 1) characters")
+                Thread.sleep(forTimeInterval: Double(breatherMs) / 1000.0)
+            }
         }
 
-        flog("Typing complete: \(typed) typed, \(skipped) skipped")
+        flog("Typing complete: \(typed) typed, \(skipped) skipped, \(failedEvents) events failed to post")
     }
 
     // Types one character into an RDP session. Prefers key codes from charMap (RDP reads
@@ -233,15 +254,24 @@ enum KeyboardSimulator {
         guard !utf16.isEmpty,
               let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
               let up   = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
-        else { return }
+        else {
+            failedEvents += 1
+            flog("Failed to create event for '\(char)' (\(failedEvents) so far)")
+            return
+        }
         down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
         up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
         down.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: Double(keyHoldMs) / 1000.0)
         up.post(tap: .cghidEventTap)
     }
 
     private static func postRaw(_ keyCode: CGKeyCode, down: Bool, flags: CGEventFlags) {
-        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: down) else { return }
+        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: down) else {
+            failedEvents += 1
+            flog("Failed to create event for keyCode \(keyCode) (\(failedEvents) so far)")
+            return
+        }
         event.flags = flags
         event.post(tap: .cghidEventTap)
     }
