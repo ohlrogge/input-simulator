@@ -39,7 +39,13 @@ Alt+numpad uses the short OEM form (`Alt+35`, no leading zero), verified on Wind
 
 This is the lever to pull when the receiving side is the bottleneck: the RDP client and the remote input buffer get a handful of text events instead of thousands of keystrokes. Return and Tab stay real key presses and flush the pending block, so ordering is preserved.
 
-It does **not** apply to `.rdpBrowser` — that client reads one virtual key code per character, so batching is impossible there. Lowering the typing delay is the only lever in that mode.
+It does **not** apply to `.rdpBrowser` — that client reads one virtual key code per character, so batching is impossible there.
+
+### Why the browser path stays slow
+
+Measured on the German layout, 1000 characters of R code in browser mode take ~4 s, made up of ~1.3 s of our own `Thread.sleep` at 1 ms per character, ~0.1 s of posting, and ~2.6 s inside the browser. Posting events is effectively free (0.08 ms per character); the browser is the wall, because every event goes through a JS handler and becomes its own RDP packet.
+
+So the only lever that would help is fewer events per character, and there is little to win: R code averages ~3.0 events per character, and the Alt+numpad characters (`[ ] { } #`) account for ~40% of all events while being only ~16% of the text. Holding Shift/Option across runs was tried and measured at **6%** — not worth the state handling and the risk of a stuck modifier, so it was reverted. Setting the typing speed to `Turbo (0 ms)` is the real win, taking those ~4 s down to ~2.7 s.
 
 ## Native Windows App: set the connection to Unicode keyboard mode
 
