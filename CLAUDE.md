@@ -12,6 +12,14 @@ If `xcodebuild` fails with an `xcode-select` error, the active developer directo
 
 After every rebuild, macOS revokes the Accessibility trust for the new binary. Always run from `~/Applications/InputSimulator.app` to keep the permission stable.
 
+`~/Applications` is the only copy that should exist. Stray copies are a recurring source of "the menu item is missing" confusion, because each one puts its own icon in the menu bar and Spotlight prefers `/Applications`. When a menu change does not show up, check what is actually running before touching the code:
+
+```bash
+ps -Ao pid,lstart,comm | grep InputSimulator | grep -v grep
+```
+
+Instances started from Xcode run out of DerivedData and are held by `debugserver` — they survive `kill -9` and have to be stopped with Xcode's Stop button.
+
 ## Architecture
 
 All keystroke logic lives in `KeyboardSimulator.swift`. The `TargetSystem` enum selects one of two paths; the user picks it in the menu under **Zielsystem** (persisted as `targetSystem` in UserDefaults, migrated from the older `windowsRdpMode` boolean):
