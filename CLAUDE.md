@@ -19,7 +19,9 @@ All keystroke logic lives in `KeyboardSimulator.swift`. The `TargetSystem` enum 
 - **`.macOS`**: injects characters as Unicode strings via `CGEvent.keyboardSetUnicodeString`. Works for any character in any macOS app — **and in the native Windows App**, see below.
 - **`.rdpBrowser`**: uses virtual key codes from the current keyboard layout (`buildCharacterMap`). Exception: characters that require the Option/Alt modifier (e.g. `[ ] { } \ | @` on German QWERTZ) are routed through **Alt+numpad sequences** instead, because browsers intercept `Option+key` CGEvents before the HTML5 RDP client sees them. Alt+numpad is forwarded correctly by browser-based RDP clients and is keyboard-layout-independent on the Windows side.
 
-`~` is a dead key on German QWERTZ and never enters the charMap, so it always falls through to the Alt+numpad path automatically.
+Dead keys take the same Alt+numpad detour. On German QWERTZ `` ` ``, `´`, `^`, `~` and `¨` are dead: they emit nothing until the next character arrives to combine with, so posting them as key codes reorders the output (` ```{ ` came out as `` ``{` ``, and a trailing ` ``` ` lost its third backtick). They are detected in `buildCharacterMap` by translating each key *without* `kUCKeyTranslateNoDeadKeysMask` — a dead key yields no characters and leaves a pending dead-key state — and flagged as `KeyStroke.isDead`.
+
+Note that dead keys **do** enter the charMap: the map is built *with* `kUCKeyTranslateNoDeadKeysMask`, which resolves them to their base character. `~` only avoided the problem by accident, because it needs Option and was already being rerouted.
 
 Alt+numpad uses the short OEM form (`Alt+35`, no leading zero), verified on Windows 11 Western locale.
 

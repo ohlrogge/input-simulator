@@ -22,6 +22,21 @@ final class CancellationToken {
 private struct KeyStroke {
     let keyCode: CGKeyCode
     let flags: CGEventFlags
+    // Dead keys (` ´ ^ ~ ¨ on QWERTZ) emit nothing on their own — they wait for the next
+    // character to combine with. Posting them as key codes therefore reorders the output.
+    let isDead: Bool
+}
+
+// A key is dead when translating it *without* kUCKeyTranslateNoDeadKeysMask yields no
+// characters and leaves a pending dead-key state.
+private func isDeadKey(_ layout: UnsafePointer<UCKeyboardLayout>, _ keyCode: UInt16,
+                       _ modState: UInt32, _ kbType: UInt32) -> Bool {
+    var deadKeyState: UInt32 = 0
+    var chars = [UniChar](repeating: 0, count: 4)
+    var charCount = 0
+    let status = UCKeyTranslate(layout, keyCode, UInt16(kUCKeyActionDown), modState, kbType,
+                                0, &deadKeyState, chars.count, &charCount, &chars)
+    return status == noErr && charCount == 0 && deadKeyState != 0
 }
 
 // Which system receives the keystrokes. Raw values are persisted in UserDefaults.
@@ -96,12 +111,14 @@ private func buildCharacterMap() -> [Character: KeyStroke] {
 
             let char = Character(scalar)
             if map[char] == nil {
-                map[char] = KeyStroke(keyCode: CGKeyCode(keyCode), flags: flags)
+                map[char] = KeyStroke(keyCode: CGKeyCode(keyCode), flags: flags,
+                                      isDead: isDeadKey(layout, keyCode, modState, kbType))
             }
         }
     }
 
-    flog("Character map built: \(map.count) entries")
+    let deadCount = map.values.filter(\.isDead).count
+    flog("Character map built: \(map.count) entries, \(deadCount) of them dead keys")
     return map
 }
 
@@ -145,7 +162,7 @@ enum KeyboardSimulator {
                 return
             }
             if let keyCode = specialKeys[char] {
-                postKey(KeyStroke(keyCode: keyCode, flags: []))
+                postKey(KeyStroke(keyCode: keyCode, flags: [], isDead: false))
                 typed += 1
             } else {
                 switch target {
@@ -184,12 +201,16 @@ enum KeyboardSimulator {
     // browsers intercept Option+key before the HTML5 RDP client sees it, and on the Windows
     // side those characters sit on entirely different keys anyway. Alt+numpad is forwarded
     // correctly by both clients and is layout-independent on Windows.
-    // ~ is a dead key on QWERTZ and never enters charMap, so it falls through to Alt+numpad.
+    //
+    // Dead keys (` ´ ^ ~ ¨ on QWERTZ) take the same detour. They emit nothing until the next
+    // character arrives to combine with, so as key codes they reorder the output: ```{ came
+    // out as ``{` and a trailing ``` lost its third backtick.
+    //
     // Returns false if the character has no usable route.
     private static func typeViaRdp(_ char: Character) -> Bool {
         let scalar = char.unicodeScalars.first
         if let stroke = charMap[char] {
-            if stroke.flags.contains(.maskAlternate),
+            if stroke.isDead || stroke.flags.contains(.maskAlternate),
                let scalar, scalar.value >= 32 && scalar.value <= 127 {
                 postAltNumpad(ascii: scalar.value)
             } else {
@@ -208,7 +229,7 @@ enum KeyboardSimulator {
     // Types a single character via unicode string injection — works in macOS apps.
     static func typeViaCharMap(_ char: Character) {
         if let keyCode = specialKeys[char] {
-            postKey(KeyStroke(keyCode: keyCode, flags: []))
+            postKey(KeyStroke(keyCode: keyCode, flags: [], isDead: false))
         } else {
             postUnicode(char)
         }
