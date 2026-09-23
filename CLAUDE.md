@@ -33,6 +33,14 @@ Note that dead keys **do** enter the charMap: the map is built *with* `kUCKeyTra
 
 Alt+numpad uses the short OEM form (`Alt+35`, no leading zero), verified on Windows 11 Western locale.
 
+## Throughput: Blockgröße
+
+`CGEvent.keyboardSetUnicodeString` takes a string, not a single character, so the `.macOS` path can put several characters into one key event. The **Blockgröße** menu sets how many (`chunkSize` in UserDefaults, default 1 = one event per character). At 15 ms typing speed, 1000 characters cost ~19 s one-by-one versus ~1 s in blocks of 20, because the per-character delay and the 4 ms key hold are paid per *event*, not per character.
+
+This is the lever to pull when the receiving side is the bottleneck: the RDP client and the remote input buffer get a handful of text events instead of thousands of keystrokes. Return and Tab stay real key presses and flush the pending block, so ordering is preserved.
+
+It does **not** apply to `.rdpBrowser` — that client reads one virtual key code per character, so batching is impossible there. Lowering the typing delay is the only lever in that mode.
+
 ## Native Windows App: set the connection to Unicode keyboard mode
 
 The second RDP system runs in Microsoft's **Windows App** rather than a browser. It works with `Zielsystem = macOS`, but **only** if the connection's *keyboard mode* is set to **Unicode** (connection settings → keyboard mode; the default is Scancode). Do not try to fix this in code — it is a client setting.

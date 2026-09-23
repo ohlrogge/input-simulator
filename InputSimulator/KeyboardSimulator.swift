@@ -150,11 +150,20 @@ enum KeyboardSimulator {
         flog("KeyboardSimulator warmed up: \(charMap.count) characters mapped")
     }
 
-    static func type(_ text: String, delayMs: Int, token: CancellationToken, target: TargetSystem = .macOS) {
-        flog("Typing started: \(text.count) chars, delay=\(delayMs)ms, target=\(target.label)")
+    static func type(_ text: String, delayMs: Int, token: CancellationToken,
+                     target: TargetSystem = .macOS, chunkSize: Int = 1) {
+        flog("Typing started: \(text.count) chars, delay=\(delayMs)ms, target=\(target.label), chunk=\(chunkSize)")
+        failedEvents = 0
+
+        // Only the Unicode path can batch: the RDP browser path has to post one real key
+        // code per character, which is exactly what that client reads.
+        if target == .macOS && chunkSize > 1 {
+            typeChunked(text, delayMs: delayMs, token: token, chunkSize: chunkSize)
+            return
+        }
+
         var typed = 0
         var skipped = 0
-        failedEvents = 0
 
         for (index, char) in text.enumerated() {
             guard !token.isCancelled else {
@@ -193,6 +202,57 @@ enum KeyboardSimulator {
         }
 
         flog("Typing complete: \(typed) typed, \(skipped) skipped, \(failedEvents) events failed to post")
+    }
+
+    // Posts up to `chunkSize` characters in a single Unicode key event — CGEvent's unicode
+    // string is not limited to one character. That cuts the event count by the chunk factor,
+    // which is the lever that matters when the receiver rather than the Mac is the bottleneck:
+    // the RDP client and the remote input buffer see a handful of text events instead of
+    // thousands of keystrokes. Return and Tab still go out as real key presses — they are key
+    // codes, not text — and flush the pending chunk so the order is preserved.
+    private static func typeChunked(_ text: String, delayMs: Int, token: CancellationToken, chunkSize: Int) {
+        var typed = 0
+        var sinceBreather = 0
+        var chunk: [Character] = []
+        chunk.reserveCapacity(chunkSize)
+
+        func pause() {
+            Thread.sleep(forTimeInterval: Double(delayMs) / 1000.0)
+            if sinceBreather >= breatherEveryChars {
+                flog("Breather after \(typed) characters")
+                Thread.sleep(forTimeInterval: Double(breatherMs) / 1000.0)
+                sinceBreather = 0
+            }
+        }
+
+        func flushChunk() {
+            guard !chunk.isEmpty else { return }
+            postUnicodeString(String(chunk))
+            typed += chunk.count
+            sinceBreather += chunk.count
+            chunk.removeAll(keepingCapacity: true)
+            pause()
+        }
+
+        for char in text {
+            guard !token.isCancelled else {
+                flog("Typing cancelled at character \(typed)/\(text.count)")
+                return
+            }
+            if let keyCode = specialKeys[char] {
+                flushChunk()
+                postKey(KeyStroke(keyCode: keyCode, flags: [], isDead: false))
+                typed += 1
+                sinceBreather += 1
+                pause()
+            } else {
+                chunk.append(char)
+                if chunk.count >= chunkSize { flushChunk() }
+            }
+        }
+        flushChunk()
+
+        flog("Typing complete: \(typed) typed, 0 skipped, \(failedEvents) events failed to post")
     }
 
     // Types one character into an RDP session. Prefers key codes from charMap (RDP reads
@@ -271,13 +331,17 @@ enum KeyboardSimulator {
     // Injects a character directly as a Unicode string — macOS apps receive the
     // correct glyph regardless of the current keyboard layout or input method.
     private static func postUnicode(_ char: Character) {
-        let utf16 = Array(String(char).utf16)
+        postUnicodeString(String(char))
+    }
+
+    private static func postUnicodeString(_ text: String) {
+        let utf16 = Array(text.utf16)
         guard !utf16.isEmpty,
               let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
               let up   = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
         else {
             failedEvents += 1
-            flog("Failed to create event for '\(char)' (\(failedEvents) so far)")
+            flog("Failed to create event for '\(text)' (\(failedEvents) so far)")
             return
         }
         down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)

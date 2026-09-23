@@ -9,6 +9,7 @@ private let kDelayKey      = "typingDelayMs"
 private let kStartDelayKey = "startDelayMs"
 private let kRdpModeKey    = "windowsRdpMode" // legacy, only read for migration
 private let kTargetKey     = "targetSystem"
+private let kChunkKey      = "chunkSize"
 
 private struct Speed {
     let label: String
@@ -26,6 +27,15 @@ private let startDelays: [Speed] = [
     Speed(label: "300 ms", ms: 300),
     Speed(label: "500 ms", ms: 500),
     Speed(label: "750 ms", ms: 750),
+]
+
+// How many characters go into one Unicode key event. 1 reproduces the original
+// one-event-per-character behaviour; larger blocks trade granularity for speed.
+private let chunkSizes: [Speed] = [
+    Speed(label: "1 (einzeln)", ms: 1),
+    Speed(label: "5",           ms: 5),
+    Speed(label: "20",          ms: 20),
+    Speed(label: "50",          ms: 50),
 ]
 
 private let symbols: [(title: String, char: String)] = [
@@ -52,6 +62,11 @@ private func currentStartDelay() -> Int {
 
 private let targets: [TargetSystem] = [.macOS, .rdpBrowser]
 
+private func currentChunkSize() -> Int {
+    let stored = UserDefaults.standard.integer(forKey: kChunkKey)
+    return stored > 0 ? stored : 1
+}
+
 private func currentTarget() -> TargetSystem {
     // Migration: installations that only ever saw the old boolean keep their setting.
     guard UserDefaults.standard.object(forKey: kTargetKey) != nil else {
@@ -67,6 +82,7 @@ class MenuBarController: NSObject {
     private var customSpeedItem: NSMenuItem?
     private var startDelayItems: [NSMenuItem] = []
     private var targetItems: [NSMenuItem] = []
+    private var chunkItems: [NSMenuItem] = []
 
     private var currentToken: CancellationToken?
     private var escMonitor: Any?
@@ -148,6 +164,24 @@ class MenuBarController: NSObject {
         startDelayItem.submenu = startDelaySubmenu
         menu.addItem(startDelayItem)
 
+        let chunkSubmenu = NSMenu()
+        let hint = NSMenuItem(title: "Nur für macOS / Windows App", action: nil, keyEquivalent: "")
+        hint.isEnabled = false
+        chunkSubmenu.addItem(hint)
+        chunkSubmenu.addItem(.separator())
+        let activeChunk = currentChunkSize()
+        for c in chunkSizes {
+            let item = NSMenuItem(title: c.label, action: #selector(setChunkSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = c.ms
+            item.state = c.ms == activeChunk ? .on : .off
+            chunkSubmenu.addItem(item)
+            chunkItems.append(item)
+        }
+        let chunkItem = NSMenuItem(title: "Blockgröße", action: nil, keyEquivalent: "")
+        chunkItem.submenu = chunkSubmenu
+        menu.addItem(chunkItem)
+
         menu.addItem(.separator())
 
         let statusMenuItem = NSMenuItem(title: "Status…", action: #selector(showStatus), keyEquivalent: "")
@@ -185,7 +219,8 @@ class MenuBarController: NSObject {
             flog("Start delay: sleeping \(startDelay)ms")
             Thread.sleep(forTimeInterval: Double(startDelay) / 1000.0)
             flog("Start delay done, handing off to KeyboardSimulator")
-            KeyboardSimulator.type(text, delayMs: delay, token: token, target: currentTarget())
+            KeyboardSimulator.type(text, delayMs: delay, token: token,
+                                   target: currentTarget(), chunkSize: currentChunkSize())
             DispatchQueue.main.async {
                 self?.finishTyping()
             }
@@ -218,6 +253,12 @@ class MenuBarController: NSObject {
         }
     }
 
+    @objc private func setChunkSize(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.tag, forKey: kChunkKey)
+        chunkItems.forEach { $0.state = $0.tag == sender.tag ? .on : .off }
+        flog("Blockgröße: \(sender.tag)")
+    }
+
     @objc private func setTarget(_ sender: NSMenuItem) {
         UserDefaults.standard.set(sender.tag, forKey: kTargetKey)
         targetItems.forEach { $0.state = $0.tag == sender.tag ? .on : .off }
@@ -245,6 +286,8 @@ class MenuBarController: NSObject {
         var lines: [String] = []
         lines.append(trusted ? "✅ Accessibility: granted" : "❌ Accessibility: NOT granted — relaunch after granting in System Settings → Privacy & Security → Accessibility")
         lines.append("🖥  Zielsystem: \(currentTarget().label)")
+        let chunk = currentChunkSize()
+        lines.append("📦 Blockgröße: \(chunk == 1 ? "einzeln" : "\(chunk) Zeichen pro Ereignis")\(currentTarget() == .macOS ? "" : " (in diesem Zielsystem ohne Wirkung)")")
         if let text = clip {
             let preview = text.prefix(60).replacingOccurrences(of: "\n", with: "↵")
             lines.append("📋 Clipboard (\(text.count) chars): \"\(preview)\(text.count > 60 ? "…" : "")\"")
