@@ -37,6 +37,21 @@ Alt+numpad uses the short OEM form (`Alt+35`, no leading zero), verified on Wind
 
 `CGEvent.keyboardSetUnicodeString` takes a string, not a single character, so the `.macOS` path can put several characters into one key event. The **Blockgröße** menu sets how many (`chunkSize` in UserDefaults, default 1 = one event per character). At 15 ms typing speed, 1000 characters cost ~19 s one-by-one versus ~1 s in blocks of 20, because the per-character delay and the 4 ms key hold are paid per *event*, not per character.
 
+### Measured throughput ceilings
+
+Long pastes degrade the same way in both target systems: the receiver's queue fills slowly, and once it is full characters are dropped or duplicated. The break point moves with the rate, so it is the *sustained average* that matters — not burst size, and not how the pauses are distributed.
+
+Measured with an 8000-character diagnostic text (`ENDE` line at the end tells you whether the whole thing arrived):
+
+| Zielsystem | delay per character | result |
+|---|---|---|
+| Windows App (chunk 50) | 1 ms (~1000 chars/s) | breaks after ~4900 characters |
+| Windows App (chunk 50) | 2 ms (~500 chars/s) | breaks after ~6400, plus a duplicated character |
+| Windows App (chunk 50) | **5 ms (~200 chars/s)** | **clean** |
+| Browser RDP | 0–1 ms | clean; the browser itself caps throughput at ~380 chars/s |
+
+Because the constraint is the average rate, a tunable breather is deliberately *not* offered: 500 ms every 500 characters at 2 ms is the same average as a flat 3 ms, just with an extra knob. Tune the typing speed instead.
+
 This is the lever to pull when the receiving side is the bottleneck: the RDP client and the remote input buffer get a handful of text events instead of thousands of keystrokes. Return and Tab stay real key presses and flush the pending block, so ordering is preserved.
 
 It does **not** apply to `.rdpBrowser` — that client reads one virtual key code per character, so batching is impossible there.
