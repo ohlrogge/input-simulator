@@ -216,8 +216,11 @@ enum KeyboardSimulator {
         var chunk: [Character] = []
         chunk.reserveCapacity(chunkSize)
 
-        func pause() {
-            Thread.sleep(forTimeInterval: Double(delayMs) / 1000.0)
+        // The delay is per character, not per event: otherwise a block of 50 would type at
+        // 50x the configured speed and flood the receiver. Blocks still win, because the
+        // per-event cost (key hold, event creation, syscall) is paid once per block.
+        func pause(characters: Int) {
+            Thread.sleep(forTimeInterval: Double(delayMs * characters) / 1000.0)
             if sinceBreather >= breatherEveryChars {
                 flog("Breather after \(typed) characters")
                 Thread.sleep(forTimeInterval: Double(breatherMs) / 1000.0)
@@ -227,11 +230,12 @@ enum KeyboardSimulator {
 
         func flushChunk() {
             guard !chunk.isEmpty else { return }
+            let count = chunk.count
             postUnicodeString(String(chunk))
-            typed += chunk.count
-            sinceBreather += chunk.count
+            typed += count
+            sinceBreather += count
             chunk.removeAll(keepingCapacity: true)
-            pause()
+            pause(characters: count)
         }
 
         for char in text {
@@ -244,7 +248,7 @@ enum KeyboardSimulator {
                 postKey(KeyStroke(keyCode: keyCode, flags: [], isDead: false))
                 typed += 1
                 sinceBreather += 1
-                pause()
+                pause(characters: 1)
             } else {
                 chunk.append(char)
                 if chunk.count >= chunkSize { flushChunk() }
