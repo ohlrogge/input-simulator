@@ -9,7 +9,29 @@ private let kDelayKey      = "typingDelayMs"
 private let kStartDelayKey = "startDelayMs"
 private let kRdpModeKey    = "windowsRdpMode" // legacy, only read for migration
 private let kTargetKey     = "targetSystem"
-private let kChunkKey      = "chunkSize"
+private let kChunkKey      = "chunkSize" // legacy, only read for migration
+private let kMigratedKey   = "perTargetSettingsMigrated"
+
+// Typing speed and block size are stored per target system: the two systems have
+// measured throughput ceilings an order of magnitude apart (see CLAUDE.md), so a single
+// global value means re-tuning by hand on every switch — and forgetting it looks exactly
+// like the dropped-character bug.
+private func delayKey(_ t: TargetSystem) -> String { "typingDelayMs.\(t.rawValue)" }
+private func chunkKey(_ t: TargetSystem) -> String { "chunkSize.\(t.rawValue)" }
+
+private func defaultDelay(_ t: TargetSystem) -> Int {
+    switch t {
+    case .macOS:      return 5 // ~200 chars/s, the measured ceiling of the Windows App
+    case .rdpBrowser: return 1
+    }
+}
+
+private func defaultChunk(_ t: TargetSystem) -> Int {
+    switch t {
+    case .macOS:      return 50
+    case .rdpBrowser: return 1 // no effect in this mode — that path needs one key code per character
+    }
+}
 
 private struct Speed {
     let label: String
@@ -51,9 +73,11 @@ private let symbols: [(title: String, char: String)] = [
 
 
 private func currentDelay() -> Int {
-    let stored = UserDefaults.standard.integer(forKey: kDelayKey)
-    // 0 is a valid custom value; only fall back to default when key was never set
-    return UserDefaults.standard.object(forKey: kDelayKey) == nil ? 40 : max(0, stored)
+    let target = currentTarget()
+    let key = delayKey(target)
+    // 0 is a valid custom value; only fall back to the default when the key was never set
+    guard UserDefaults.standard.object(forKey: key) != nil else { return defaultDelay(target) }
+    return max(0, UserDefaults.standard.integer(forKey: key))
 }
 
 private func currentStartDelay() -> Int {
@@ -64,8 +88,30 @@ private func currentStartDelay() -> Int {
 private let targets: [TargetSystem] = [.macOS, .rdpBrowser]
 
 private func currentChunkSize() -> Int {
-    let stored = UserDefaults.standard.integer(forKey: kChunkKey)
-    return stored > 0 ? stored : 1
+    let target = currentTarget()
+    let stored = UserDefaults.standard.integer(forKey: chunkKey(target))
+    return stored > 0 ? stored : defaultChunk(target)
+}
+
+// Carries the old global values over to the target that was active when they were tuned,
+// and gives the other target its default rather than a value measured for the wrong system.
+private func migratePerTargetSettings() {
+    let d = UserDefaults.standard
+    guard !d.bool(forKey: kMigratedKey) else { return }
+    let active = currentTarget()
+    let hadDelay = d.object(forKey: kDelayKey) != nil
+    let hadChunk = d.object(forKey: kChunkKey) != nil
+
+    for t in targets {
+        if d.object(forKey: delayKey(t)) == nil {
+            d.set(t == active && hadDelay ? max(0, d.integer(forKey: kDelayKey)) : defaultDelay(t), forKey: delayKey(t))
+        }
+        if d.object(forKey: chunkKey(t)) == nil {
+            d.set(t == active && hadChunk ? max(1, d.integer(forKey: kChunkKey)) : defaultChunk(t), forKey: chunkKey(t))
+        }
+    }
+    d.set(true, forKey: kMigratedKey)
+    flog("Migrated settings to per-target keys (active: \(active.label))")
 }
 
 private func currentTarget() -> TargetSystem {
@@ -90,6 +136,7 @@ class MenuBarController: NSObject {
 
     override init() {
         super.init()
+        migratePerTargetSettings()
         setupButton()
         setupMenu()
         hotkeyManager = HotkeyManager(onTrigger: { [weak self] in self?.pasteViaTyping() })
@@ -170,15 +217,14 @@ class MenuBarController: NSObject {
         hint.isEnabled = false
         chunkSubmenu.addItem(hint)
         chunkSubmenu.addItem(.separator())
-        let activeChunk = currentChunkSize()
         for c in chunkSizes {
             let item = NSMenuItem(title: c.label, action: #selector(setChunkSize(_:)), keyEquivalent: "")
             item.target = self
             item.tag = c.ms
-            item.state = c.ms == activeChunk ? .on : .off
             chunkSubmenu.addItem(item)
             chunkItems.append(item)
         }
+        updateChunkCheckmarks()
         let chunkItem = NSMenuItem(title: "Blockgröße", action: nil, keyEquivalent: "")
         chunkItem.submenu = chunkSubmenu
         menu.addItem(chunkItem)
@@ -254,16 +300,24 @@ class MenuBarController: NSObject {
         }
     }
 
+    private func updateChunkCheckmarks() {
+        let chunk = currentChunkSize()
+        chunkItems.forEach { $0.state = $0.tag == chunk ? .on : .off }
+    }
+
     @objc private func setChunkSize(_ sender: NSMenuItem) {
-        UserDefaults.standard.set(sender.tag, forKey: kChunkKey)
-        chunkItems.forEach { $0.state = $0.tag == sender.tag ? .on : .off }
-        flog("Blockgröße: \(sender.tag)")
+        UserDefaults.standard.set(sender.tag, forKey: chunkKey(currentTarget()))
+        updateChunkCheckmarks()
+        flog("Blockgröße (\(currentTarget().label)): \(sender.tag)")
     }
 
     @objc private func setTarget(_ sender: NSMenuItem) {
         UserDefaults.standard.set(sender.tag, forKey: kTargetKey)
         targetItems.forEach { $0.state = $0.tag == sender.tag ? .on : .off }
-        flog("Zielsystem: \(currentTarget().label)")
+        // Speed and block size belong to the target, so the checkmarks move with it.
+        updateSpeedCheckmarks()
+        updateChunkCheckmarks()
+        flog("Zielsystem: \(currentTarget().label), \(currentDelay()) ms, Block \(currentChunkSize())")
     }
 
     @objc private func insertSymbol(_ sender: NSMenuItem) {
@@ -289,6 +343,7 @@ class MenuBarController: NSObject {
         lines.append("🖥  Zielsystem: \(currentTarget().label)")
         let chunk = currentChunkSize()
         lines.append("📦 Blockgröße: \(chunk == 1 ? "einzeln" : "\(chunk) Zeichen pro Ereignis")\(currentTarget() == .macOS ? "" : " (in diesem Zielsystem ohne Wirkung)")")
+        lines.append("⏱  Tempo: \(currentDelay()) ms pro Zeichen — gilt nur für \(currentTarget().label)")
         if let text = clip {
             let preview = text.prefix(60).replacingOccurrences(of: "\n", with: "↵")
             lines.append("📋 Clipboard (\(text.count) chars): \"\(preview)\(text.count > 60 ? "…" : "")\"")
@@ -317,7 +372,7 @@ class MenuBarController: NSObject {
     }
 
     @objc private func setSpeed(_ sender: NSMenuItem) {
-        UserDefaults.standard.set(sender.tag, forKey: kDelayKey)
+        UserDefaults.standard.set(sender.tag, forKey: delayKey(currentTarget()))
         updateSpeedCheckmarks()
     }
 
@@ -337,8 +392,8 @@ class MenuBarController: NSObject {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let raw = input.stringValue.trimmingCharacters(in: .whitespaces)
         guard let value = Int(raw), value >= 0 else { return }
-        UserDefaults.standard.set(value, forKey: kDelayKey)
-        flog("Custom typing speed set: \(value) ms")
+        UserDefaults.standard.set(value, forKey: delayKey(currentTarget()))
+        flog("Custom typing speed set: \(value) ms (\(currentTarget().label))")
         updateSpeedCheckmarks()
     }
 

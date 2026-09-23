@@ -50,6 +50,8 @@ Measured with an 8000-character diagnostic text (`ENDE` line at the end tells yo
 | Windows App (chunk 50) | **5 ms (~200 chars/s)** | **clean** |
 | Browser RDP | 0–1 ms | clean; the browser itself caps throughput at ~380 chars/s |
 
+Because the two ceilings are an order of magnitude apart, typing speed and block size are stored **per target system** (`typingDelayMs.<rawValue>`, `chunkSize.<rawValue>`), and the Zielsystem menu switches them along with the target. A single global value meant re-tuning by hand on every switch, and forgetting to do so looks exactly like the dropped-character bug. `migratePerTargetSettings()` carries the old global keys over to whichever target was active at the time and gives the other one its default; start delay stays global, since it is about the user's reaction time rather than the receiver.
+
 Because the constraint is the average rate, a tunable breather is deliberately *not* offered: 500 ms every 500 characters at 2 ms is the same average as a flat 3 ms, just with an extra knob. Tune the typing speed instead.
 
 This is the lever to pull when the receiving side is the bottleneck: the RDP client and the remote input buffer get a handful of text events instead of thousands of keystrokes. Return and Tab stay real key presses and flush the pending block, so ordering is preserved.
