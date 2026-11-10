@@ -3,12 +3,19 @@ set -e
 
 echo "==> Checking Xcode developer tools…"
 DEVDIR=$(xcode-select -p 2>/dev/null || true)
-if [[ "$DEVDIR" != *"Xcode.app"* ]]; then
-    echo "    ERROR: xcode-select is pointing at '$DEVDIR' instead of Xcode."
-    echo "    Fix:   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+XCODE_DEVDIR="/Applications/Xcode.app/Contents/Developer"
+if [[ "$DEVDIR" == *"Xcode.app"* ]]; then
+    echo "    OK: $DEVDIR"
+elif [[ -d "$XCODE_DEVDIR" ]]; then
+    # xcode-select points at the Command Line Tools. Switching it system-wide
+    # needs sudo (an admin account); DEVELOPER_DIR overrides it for this script only.
+    export DEVELOPER_DIR="$XCODE_DEVDIR"
+    echo "    xcode-select points at '$DEVDIR' — using $XCODE_DEVDIR via DEVELOPER_DIR."
+else
+    echo "    ERROR: Xcode not found at /Applications/Xcode.app (xcode-select: '$DEVDIR')."
+    echo "    Install Xcode, or set DEVELOPER_DIR to its Contents/Developer directory."
     exit 1
 fi
-echo "    OK: $DEVDIR"
 
 echo ""
 echo "==> Building InputSimulator (Release)…"
@@ -16,8 +23,7 @@ BUILD_LOG=$(xcodebuild -project InputSimulator.xcodeproj \
   -scheme InputSimulator \
   -configuration Release \
   CONFIGURATION_BUILD_DIR=./build \
-  build 2>&1)
-BUILD_STATUS=$?
+  build 2>&1) && BUILD_STATUS=0 || BUILD_STATUS=$?
 echo "$BUILD_LOG" | grep -E "(error:|warning:|\*\* BUILD)" || true
 if [ $BUILD_STATUS -ne 0 ]; then
     echo "    ERROR: build failed — run xcodebuild manually for full output"
@@ -30,7 +36,11 @@ echo "==> Installing InputSimulator.app to ~/Applications…"
 CURRENT_COMMIT=$(git rev-parse HEAD)
 INSTALLED_FILE="$HOME/.inputsimulator_installed_commit"
 INSTALLED_COMMIT=$(cat "$INSTALLED_FILE" 2>/dev/null || echo "none")
-if [[ "$CURRENT_COMMIT" == "$INSTALLED_COMMIT" ]]; then
+INSTALLED_APP="$HOME/Applications/InputSimulator.app"
+# Skipping keeps the Accessibility trust of the existing binary, but only makes
+# sense if that binary is really there and was built from this exact source.
+if [[ "$CURRENT_COMMIT" == "$INSTALLED_COMMIT" && -d "$INSTALLED_APP" \
+      && -z "$(git status --porcelain)" ]]; then
     echo "    Already installed at current version ($(git rev-parse --short HEAD)) — skipping."
 else
     echo "    Quitting running instance (if any)…"

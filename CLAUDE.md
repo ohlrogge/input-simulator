@@ -8,7 +8,7 @@ macOS menu bar utility that simulates keyboard input character by character. Pri
 
 Use `./install.sh` — it builds a Release binary via `xcodebuild` and copies the `.app` to `~/Applications`. There is no `swift build` / CLI build path (macOS app with entitlements and a menu bar lifecycle).
 
-If `xcodebuild` fails with an `xcode-select` error, the active developer directory is pointing at Command Line Tools instead of Xcode: `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
+If `xcode-select` points at the Command Line Tools instead of Xcode, `install.sh` sets `DEVELOPER_DIR` to `/Applications/Xcode.app/Contents/Developer` for its own run. That way it needs no `sudo xcode-select -s …` — the user account is not in the sudoers file, so changing the system-wide setting means switching to the admin account.
 
 After every rebuild, macOS revokes the Accessibility trust for the new binary. Always run from `~/Applications/InputSimulator.app` to keep the permission stable.
 
